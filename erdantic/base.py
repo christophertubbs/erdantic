@@ -1,9 +1,10 @@
 from abc import ABC, abstractmethod
 import inspect
 from typing import Any, Callable, Dict, Generic, List, Optional, Type, TypeVar, Union
+from typing import Callable
 
 from erdantic.exceptions import InvalidModelAdapterError, ModelAdapterNotFoundError
-from erdantic.typing import Final, GenericAlias, repr_type
+from erdantic.typing import Final, repr_type
 
 
 _row_template = """<tr><td>{name}</td><td port="{name}">{type_name}</td></tr>"""
@@ -38,7 +39,7 @@ class Field(ABC, Generic[FT]):
 
     @property
     @abstractmethod
-    def type_obj(self) -> Union[type, GenericAlias]:
+    def type_obj(self) -> Type:
         """Python type object for this field."""
         pass
 
@@ -183,7 +184,7 @@ model_adapter_registry: Dict[str, Type[Model]] = {}
 subclass must be registered for it to be available to the diagram creation workflow."""
 
 
-def register_model_adapter(type_name: str) -> Callable[[Type[Model]], Type[Model]]:
+def register_model_adapter(type_name: str) -> Callable[[type], type]:
     """Create decorator to register a concrete [`Model`][erdantic.base.Model] adapter subclass
     that will be identified under the key `type_name`. A concrete `Model` subclass must be
     registered for it to be available to the diagram creation workflow.

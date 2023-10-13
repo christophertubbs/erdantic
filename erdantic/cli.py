@@ -6,9 +6,9 @@ from typing import List, Optional, TYPE_CHECKING
 import typer
 
 from erdantic.base import model_adapter_registry
+from erdantic.enums import Orientation
 from erdantic.erd import create
 from erdantic.exceptions import ModelOrModuleNotFoundError
-from erdantic.version import __version__
 
 
 app = typer.Typer()
@@ -31,22 +31,6 @@ else:
     )
 
 
-def version_callback(version: bool):
-    """Print erdantic version to console."""
-    if version:
-        typer.echo(__version__)
-        raise typer.Exit()
-
-
-def dot_callback(ctx: typer.Context, dot: bool):
-    """Set --out to not be required since we're going to ignore it."""
-    if dot:
-        for param in ctx.command.params:
-            if param.name == "out":
-                param.required = False
-    return dot
-
-
 @app.command()
 def main(
     models_or_modules: List[str] = typer.Argument(
@@ -58,71 +42,43 @@ def main(
             "composition tree to find component classes."
         ),
     ),
-    termini: List[str] = typer.Option(
-        None,
-        "--terminus",
-        "-t",
-        help=(
-            "Full dotted paths for data model classes to set as terminal nodes in the diagram. "
-            "erdantic will stop searching for component classes when it reaches these models. "
-            "Repeat this option if more than one."
-        ),
-    ),
-    limit_search_models_to: List[SupportedModelIdentifier] = typer.Option(
-        None,
-        "--limit-search-models-to",
-        "-m",
-        help=(
-            "Identifiers of model classes that erdantic supports. If any are specified, when "
-            "searching a module, limit data model classes to those ones. Repeat this option if "
-            "more than one.Defaults to None which will find all data model classes supported by "
-            "erdantic. "
-        ),
-    ),
-    out: Path = typer.Option(..., "--out", "-o", help="Output filename."),
-    dot: Optional[bool] = typer.Option(
-        None,
-        "--dot",
+    out: Path = typer.Option(None, "--out", "-o", help="Output filename."),
+    depth_limit: Optional[int] = typer.Option(
+        1,
+        "--depth",
         "-d",
-        callback=dot_callback,
         help=(
-            "Print out Graphviz DOT language representation for generated graph to console "
-            "instead of rendering an image. The --out option will be ignored."
-        ),
+            "The depth to which dependent classes should be searched"
+        )
     ),
-    no_overwrite: Optional[bool] = typer.Option(
-        None, "--no-overwrite", help="Prevent overwriting an existing file."
-    ),
-    version: Optional[bool] = typer.Option(
-        None,
-        "--version",
-        callback=version_callback,
-        is_eager=True,
-        help="Show erdantic version and exit.",
-    ),
+    vertical: Optional[bool] = typer.Option(
+        False,
+        "--vertical",
+        "-v",
+        help="Whether the graph should be drawn as a portrait"
+    )
 ):
     """Draw entity relationship diagrams (ERDs) for Python data model classes. Diagrams are
     rendered using the Graphviz library. Currently supported data modeling frameworks are Pydantic
     and standard library dataclasses.
     """
+    orientation = Orientation.VERTICAL if vertical else Orientation.HORIZONTAL
+
     model_or_module_objs = [import_object_from_name(mm) for mm in models_or_modules]
-    termini_classes = [import_object_from_name(mm) for mm in termini]
-    limit_search_models_to_str = [
-        m.value for m in limit_search_models_to
-    ] or None  # Don't want empty list
     diagram = create(
         *model_or_module_objs,
-        termini=termini_classes,
-        limit_search_models_to=limit_search_models_to_str,
+        depth_limit=depth_limit,
+        orientation=orientation
     )
-    if dot:
-        typer.echo(diagram.to_dot())
-    else:
-        if out.exists() and no_overwrite:
-            typer.echo(f"{out} already exists, and you specified --no-overwrite.")
-            raise typer.Exit(code=1)
+
+    if out:
+        with open(str(out) + ".dot", "w") as dot_file:
+            dot_file.write(diagram.to_dot())
+
         diagram.draw(out)
-        typer.echo(f"Rendered diagram to {out}")
+        typer.echo(f"Rendered diagram to {out} and .dot to {out}.dot")
+    else:
+        typer.echo(diagram.to_dot())
 
 
 def import_object_from_name(full_obj_name):

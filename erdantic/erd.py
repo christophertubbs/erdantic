@@ -1,11 +1,12 @@
 import inspect
 import os
 from types import ModuleType
-from typing import Any, Iterable, Iterator, List, Optional, Sequence, Set, Type, Union
+from typing import Any, Iterable, Iterator, List, Sequence, Set, Type, Union
 
 import pygraphviz as pgv
 
-from erdantic.base import Field, get_model_adapter, Model, model_adapter_registry
+from erdantic.base import Field, Model, model_adapter_registry
+from erdantic.enums import Orientation
 from erdantic.exceptions import (
     NotATypeError,
     _StringForwardRefError,
@@ -16,7 +17,6 @@ from erdantic.exceptions import (
     UnknownModelTypeError,
 )
 from erdantic.typing import get_recursive_args
-from erdantic.version import __version__
 
 
 class Edge:
@@ -83,16 +83,20 @@ class EntityRelationshipDiagram:
 
     Attributes:
         models (List[Model]): Data models (nodes) in diagram.
-        attr2 (List[Edge]): Edges in diagram, representing the composition relationship between
+        edges (List[Edge]): Edges in diagram, representing the composition relationship between
             models.
     """
 
     models: List["Model"]
     edges: List["Edge"]
+    name: str
+    orientation: str
 
-    def __init__(self, models: Sequence["Model"], edges: Sequence["Edge"]):
+    def __init__(self, models: Sequence["Model"], edges: Sequence["Edge"], orientation: Orientation = Orientation.HORIZONTAL):
         self.models = sorted(models)
         self.edges = sorted(edges)
+        self.name = models[0].name
+        self.orientation = str(orientation)
 
     def draw(self, out: Union[str, os.PathLike], **kwargs):
         """Render entity relationship diagram for given data model classes to file.
@@ -115,26 +119,26 @@ class EntityRelationshipDiagram:
             strict=False,
             nodesep=0.5,
             ranksep=1.5,
-            rankdir="LR",
-            name="Entity Relationship Diagram",
-            label=f"Created by erdantic v{__version__} <https://github.com/drivendataorg/erdantic>",
+            rankdir=self.orientation,
+            name=self.name,
             fontsize=9,
             fontcolor="gray66",
         )
         g.node_attr["fontsize"] = 14
         g.node_attr["shape"] = "plain"
         for model in self.models:
+            label = model.dot_label()
             g.add_node(
                 model.key,
-                label=model.dot_label(),
-                tooltip=model.docstring.replace("\n", "&#xA;"),
+                label=label
             )
+
+        tail_direction = "e"
         for edge in self.edges:
             g.add_edge(
                 edge.source.key,
                 edge.target.key,
-                tailport=f"{edge.source_field.name}:e",
-                headport="_root:w",
+                tailport=f"{edge.source_field.name}_{tail_direction}:{tail_direction}",
                 arrowhead=edge.dot_arrowhead(),
             )
         return g
@@ -157,7 +161,7 @@ class EntityRelationshipDiagram:
     def __repr__(self) -> str:
         models = ", ".join(repr(m) for m in self.models)
         edges = ", ".join(repr(e) for e in self.edges)
-        return f"EntityRelationshipDiagram(models=[{models}], edges=[{edges}])"
+        return f"{self.name}(models=[{models}], edges=[{edges}])"
 
     def _repr_png_(self) -> bytes:
         graph = self.graph()
@@ -170,20 +174,16 @@ class EntityRelationshipDiagram:
 
 def create(
     *models_or_modules: Union[type, ModuleType],
-    termini: Sequence[type] = [],
-    limit_search_models_to: Optional[Iterable[str]] = None,
+    depth_limit: int = 1,
+    orientation: Orientation = Orientation.HORIZONTAL
 ) -> EntityRelationshipDiagram:
     """Construct [`EntityRelationshipDiagram`][erdantic.erd.EntityRelationshipDiagram] from given
     data model classes.
 
     Args:
         *models_or_modules (type): Data model classes to diagram or modules containing them.
-        termini (Sequence[type]): Data model classes to set as terminal nodes. erdantic will stop
-            searching for component classes when it reaches these models
-        limit_search_models_to (Optional[Iterable[sr]], optional): Iterable of identifiers of data
-            model classes that erdantic supports. If any are specified, when searching a module,
-            limit data model classes to those ones. Defaults to None which will find all data model
-            classes supported by erdantic.
+        depth_limit (int): The depth to dive in order to find dependent classes
+        orientation (Orientation): The direction that the graph should be drawn in
     Raises:
         UnknownModelTypeError: If model is not recognized as a supported model type.
 
@@ -195,41 +195,37 @@ def create(
         if isinstance(mm, type):
             models.append(mm)
         elif isinstance(mm, ModuleType):
-            models.extend(find_models(mm, limit_search_models_to=limit_search_models_to))
+            models.extend(find_models(mm))
         else:
             raise NotATypeError(f"Given model is not a type: {mm}")
-    for terminal_model in tuple(termini):
-        if not isinstance(terminal_model, type):
-            raise NotATypeError(f"Given terminal model is not a type: {terminal_model}")
 
-    seen_models: Set[Model] = {adapt_model(t) for t in termini}
+    seen_models: Set[Model] = set()
     seen_edges: Set[Edge] = set()
+
     for raw_model in models:
         model = adapt_model(raw_model)
-        search_composition_graph(model=model, seen_models=seen_models, seen_edges=seen_edges)
+        search_composition_graph(
+            model=model,
+            seen_models=seen_models,
+            seen_edges=seen_edges,
+            depth_limit=depth_limit
+        )
     return EntityRelationshipDiagram(models=list(seen_models), edges=list(seen_edges))
 
 
 def find_models(
-    module: ModuleType, limit_search_models_to: Optional[Iterable[str]] = None
+    module: ModuleType
 ) -> Iterator[type]:
     """Searches a module and yields all data model classes found.
 
     Args:
         module (ModuleType): Module to search for data model classes
-        limit_search_models_to (Optional[Iterable[sr]], optional): Iterable of identifiers of data
-            model classes that erdantic supports. If any are specified, when searching a module,
-            limit data model classes to those ones. Defaults to None which will find all data model
-            classes supported by erdantic.
 
     Yields:
         Iterator[type]: Members of module that are data model classes.
     """
-    limit_search_models_to_adapters: Iterable[Type[Model]]
-    if limit_search_models_to is None:
-        limit_search_models_to_adapters = model_adapter_registry.values()
-    else:
-        limit_search_models_to_adapters = [get_model_adapter(m) for m in limit_search_models_to]
+
+    limit_search_models_to_adapters: Iterable[Type[Model]] = model_adapter_registry.values()
 
     for _, member in inspect.getmembers(module, inspect.isclass):
         if member.__module__ == module.__name__:
@@ -261,6 +257,8 @@ def search_composition_graph(
     model: Model,
     seen_models: Set[Model],
     seen_edges: Set[Edge],
+    depth: int = 0,
+    depth_limit: int = 1
 ):
     """Recursively search composition graph for a model, where nodes are models and edges are
     composition relationships between models. Nodes and edges that are discovered will be added to
@@ -270,33 +268,43 @@ def search_composition_graph(
         model (Model): Root node to begin search.
         seen_models (Set[Model]): Set instance that visited nodes will be added to.
         seen_edges (Set[Edge]): Set instance that traversed edges will be added to.
+        depth (int): How deep the dependency tree has been searched
+        depth_limit (int): How deep within the dependency tree models may be searched for
     """
     if model not in seen_models:
         seen_models.add(model)
-        for field in model.fields:
-            try:
-                for arg in get_recursive_args(field.type_obj):
-                    try:
-                        field_model = adapt_model(arg)
-                        seen_edges.add(Edge(source=model, source_field=field, target=field_model))
-                        search_composition_graph(field_model, seen_models, seen_edges)
-                    except UnknownModelTypeError:
-                        pass
-            except _UnevaluatedForwardRefError as e:
-                raise UnevaluatedForwardRefError(
-                    model=model, field=field, forward_ref=e.forward_ref
-                ) from None
-            except _StringForwardRefError as e:
-                raise StringForwardRefError(
-                    model=model, field=field, forward_ref=e.forward_ref
-                ) from None
+
+        if depth < depth_limit:
+            for field in model.fields:
+                try:
+                    for arg in get_recursive_args(field.type_obj):
+                        try:
+                            field_model = adapt_model(arg)
+                            seen_edges.add(Edge(source=model, source_field=field, target=field_model))
+                            search_composition_graph(
+                                field_model,
+                                seen_models,
+                                seen_edges,
+                                depth=depth + 1,
+                                depth_limit=depth_limit
+                            )
+                        except UnknownModelTypeError:
+                            pass
+                except _UnevaluatedForwardRefError as e:
+                    raise UnevaluatedForwardRefError(
+                        model=model, field=field, forward_ref=e.forward_ref
+                    ) from None
+                except _StringForwardRefError as e:
+                    raise StringForwardRefError(
+                        model=model, field=field, forward_ref=e.forward_ref
+                    ) from None
 
 
 def draw(
     *models_or_modules: Union[type, ModuleType],
     out: Union[str, os.PathLike],
-    termini: Sequence[type] = [],
-    limit_search_models_to: Optional[Iterable[str]] = None,
+    depth_limit: int = 1,
+    orientation: Orientation = Orientation.HORIZONTAL,
     **kwargs,
 ):
     """Render entity relationship diagram for given data model classes to file.
@@ -304,41 +312,29 @@ def draw(
     Args:
         *models_or_modules (type): Data model classes to diagram, or modules containing them.
         out (Union[str, os.PathLike]): Output file path for rendered diagram.
-        termini (Sequence[type]): Data model classes to set as terminal nodes. erdantic will stop
-            searching for component classes when it reaches these models
-        limit_search_models_to (Optional[Iterable[sr]], optional): Iterable of identifiers of data
-            model classes that erdantic supports. If any are specified, when searching a module,
-            limit data model classes to those ones. Defaults to None which will find all data model
-            classes supported by erdantic.
+        depth_limit (int): The maximum depth to look for dependent classes to render
+        orientation (Orientation): The direction to draw the graph in
         **kwargs: Additional keyword arguments to [`pygraphviz.AGraph.draw`](https://pygraphviz.github.io/documentation/latest/reference/agraph.html#pygraphviz.AGraph.draw).
     """
-    diagram = create(
-        *models_or_modules, termini=termini, limit_search_models_to=limit_search_models_to
-    )
+    diagram = create(*models_or_modules, depth_limit=depth_limit, orientation=orientation)
     diagram.draw(out=out, **kwargs)
 
 
 def to_dot(
     *models_or_modules: Union[type, ModuleType],
-    termini: Sequence[type] = [],
-    limit_search_models_to: Optional[Iterable[str]] = None,
+    depth_limit: int = 1,
+    orientation: Orientation = Orientation.HORIZONTAL
 ) -> str:
     """Generate Graphviz [DOT language](https://graphviz.org/doc/info/lang.html) representation of
     entity relationship diagram for given data model classes.
 
     Args:
         *models_or_modules (type): Data model classes to diagram, or modules containing them.
-        termini (Sequence[type]): Data model classes to set as terminal nodes. erdantic will stop
-            searching for component classes when it reaches these models
-        limit_search_models_to (Optional[Iterable[sr]], optional): Iterable of identifiers of data
-            model classes that erdantic supports. If any are specified, when searching a module,
-            limit data model classes to those ones. Defaults to None which will find all data model
-            classes supported by erdantic.
+        depth_limit (int): The maximum depth to look for dependent classes to render
+        orientation (Orientation): The direction to draw the graph in
 
     Returns:
         str: DOT language representation of diagram
     """
-    diagram = create(
-        *models_or_modules, termini=termini, limit_search_models_to=limit_search_models_to
-    )
+    diagram = create(*models_or_modules, depth_limit=depth_limit, orientation=orientation)
     return diagram.to_dot()
