@@ -210,7 +210,7 @@ def create(
             seen_edges=seen_edges,
             depth_limit=depth_limit
         )
-    return EntityRelationshipDiagram(models=list(seen_models), edges=list(seen_edges))
+    return EntityRelationshipDiagram(models=list(seen_models), edges=list(seen_edges), orientation=orientation)
 
 
 def find_models(
@@ -316,6 +316,9 @@ def draw(
         orientation (Orientation): The direction to draw the graph in
         **kwargs: Additional keyword arguments to [`pygraphviz.AGraph.draw`](https://pygraphviz.github.io/documentation/latest/reference/agraph.html#pygraphviz.AGraph.draw).
     """
+    if len(models_or_modules) == 1 and isinstance(models_or_modules[0], Sequence):
+        models_or_modules = models_or_modules[0]
+
     diagram = create(*models_or_modules, depth_limit=depth_limit, orientation=orientation)
     diagram.draw(out=out, **kwargs)
 
