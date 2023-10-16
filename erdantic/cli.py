@@ -1,34 +1,15 @@
-from enum import Enum
 from importlib import import_module
 from pathlib import Path
-from typing import List, Optional, TYPE_CHECKING
+from typing import List, Optional
 
 import typer
 
-from erdantic.base import model_adapter_registry
 from erdantic.enums import Orientation
 from erdantic.erd import create
 from erdantic.exceptions import ModelOrModuleNotFoundError
 
 
 app = typer.Typer()
-
-
-class StrEnum(str, Enum):
-    pass
-
-
-if TYPE_CHECKING:
-    # mypy typechecking doesn't really support enums created with functional API
-    # https://github.com/python/mypy/issues/6037
-
-    class SupportedModelIdentifier(StrEnum):
-        pass
-
-else:
-    SupportedModelIdentifier = StrEnum(
-        "SupportedModelIdentifier", {key: key for key in model_adapter_registry.keys()}
-    )
 
 
 @app.command()
@@ -51,6 +32,12 @@ def main(
             "The depth to which dependent classes should be searched"
         )
     ),
+    include_dot: Optional[bool] = typer.Option(
+        False,
+        "--include-dot",
+        "-i",
+        help="Write out a corresponding Graphviz DOT file"
+    ),
     vertical: Optional[bool] = typer.Option(
         False,
         "--vertical",
@@ -72,8 +59,9 @@ def main(
     )
 
     if out:
-        with open(str(out) + ".dot", "w") as dot_file:
-            dot_file.write(diagram.to_dot())
+        if include_dot:
+            with open(str(out) + ".dot", "w") as dot_file:
+                dot_file.write(diagram.to_dot())
 
         diagram.draw(out)
         typer.echo(f"Rendered diagram to {out} and .dot to {out}.dot")
