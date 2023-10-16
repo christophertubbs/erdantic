@@ -196,7 +196,7 @@ class PydanticModel(Model[Type[pydantic.BaseModel]]):
                 f"Got {repr_type_with_mro(model)}"
             )
         super().__init__(model=model)
-        self.__fields: List[PydanticField] = []
+        self.__fields: List[PydanticField] = [PydanticField(field=f) for f in self.model.__fields__.values()]
 
     @staticmethod
     def is_model_type(obj: Any) -> bool:
@@ -204,13 +204,11 @@ class PydanticModel(Model[Type[pydantic.BaseModel]]):
 
     @property
     def fields(self) -> List[PydanticField]:
-        if not self.__fields:
-            self.__fields = [PydanticField(field=f) for f in self.model.__fields__.values()]
         return self.__fields
 
     @property
     def has_field_descriptions(self) -> bool:
-        for field in self.__fields:
+        for field in self.fields:
             if field.description:
                 return True
         return False
