@@ -24,6 +24,17 @@ erdantic's graph modeling depends on [pygraphviz](https://pygraphviz.github.io/d
 PyGraphviz can tend to be difficult to install due to the dependence on Graphviz, so please consult the 
 [installation instructions](https://pygraphviz.github.io/documentation/stable/install.html) for help.
 
+If `Graphviz` is installed on MacOS via [Homebrew](https://brew.sh/), install `PyGraphviz` via:
+
+```bash
+brew install graphviz
+pip install --use-pep517 \
+            --config-setting="--global-option=build_ext" \
+            --config-setting="--build-option=-I$(brew --prefix graphviz)/include/" \
+            --config-setting="--build-option=-L$(brew --prefix graphviz)/lib/" \
+            pygraphviz
+```
+
 When installing via pip, just call:
 
 ```bash
